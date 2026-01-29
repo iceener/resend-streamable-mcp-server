@@ -205,6 +205,19 @@ export async function deleteSegment(
 // Emails
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface Attachment {
+  /** Content of an attached file, passed as a Base64 string */
+  content?: string;
+  /** Name of attached file */
+  filename: string;
+  /** URL path where the attachment file is hosted (better for larger attachments) */
+  path?: string;
+  /** Content type for the attachment, if not set will be derived from the filename */
+  content_type?: string;
+  /** Content ID for embedding images inline via cid: */
+  content_id?: string;
+}
+
 export interface SendEmailParams {
   from: string;
   to: string | string[];
@@ -221,6 +234,7 @@ export interface SendEmailParams {
     id: string;
     variables?: Record<string, string | number>;
   };
+  attachments?: Attachment[];
 }
 
 export interface SentEmail {

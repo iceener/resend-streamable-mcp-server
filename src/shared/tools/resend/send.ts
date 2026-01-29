@@ -51,6 +51,45 @@ function parseScheduleTime(input: string): Date | null {
 }
 
 /**
+ * Check if a recipient email is allowed by the whitelist.
+ * Supports exact email matches and domain patterns (e.g., @example.com).
+ */
+function isRecipientAllowed(email: string, allowedList: string[]): boolean {
+  const normalizedEmail = email.toLowerCase();
+  const domain = normalizedEmail.split('@')[1];
+  
+  return allowedList.some(pattern => {
+    if (pattern.startsWith('@')) {
+      // Domain pattern: @example.com matches user@example.com
+      return domain === pattern.slice(1);
+    }
+    // Exact email match
+    return normalizedEmail === pattern;
+  });
+}
+
+/**
+ * Validate all recipients against the whitelist.
+ * Returns { valid: true } or { valid: false, blocked: string[] }.
+ */
+function validateRecipients(
+  recipients: string[],
+  allowedList?: string[]
+): { valid: true } | { valid: false; blocked: string[] } {
+  if (!allowedList || allowedList.length === 0) {
+    return { valid: true }; // No restriction
+  }
+  
+  const blocked = recipients.filter(email => !isRecipientAllowed(email, allowedList));
+  
+  if (blocked.length > 0) {
+    return { valid: false, blocked };
+  }
+  
+  return { valid: true };
+}
+
+/**
  * Convert plain text to minimal HTML preserving newlines.
  */
 function textToHtml(text: string): string {
@@ -102,6 +141,23 @@ function processContent(body: string, format: 'text' | 'html' | 'auto'): { html?
   };
 }
 
+const AttachmentSchema = z.object({
+  content: z.string()
+    .optional()
+    .describe('Base64 encoded content of the file. Use this OR "path", not both.'),
+  filename: z.string()
+    .describe('Name of the attached file (e.g., "report.pdf", "image.png")'),
+  path: z.string().url()
+    .optional()
+    .describe('URL where the attachment file is hosted. Better for larger attachments. Use this OR "content", not both.'),
+  content_type: z.string()
+    .optional()
+    .describe('MIME type (e.g., "application/pdf", "image/png"). Auto-detected from filename if not provided.'),
+  content_id: z.string()
+    .optional()
+    .describe('Content ID for embedding images inline. Reference in HTML as <img src="cid:your-content-id">'),
+});
+
 const InputSchema = z.object({
   // Target (one required)
   to: z.union([z.string().email(), z.array(z.string().email())])
@@ -142,6 +198,9 @@ const InputSchema = z.object({
   schedule_for: z.string()
     .optional()
     .describe('Schedule send time. ISO 8601 format (2024-12-25T10:00:00Z) or natural language ("in 30 minutes", "tomorrow at 9am"). Broadcasts require minimum 5 minutes ahead.'),
+  attachments: z.array(AttachmentSchema)
+    .optional()
+    .describe('File attachments (max 40MB total after Base64 encoding). Each attachment needs filename and either content (Base64) or path (URL).'),
 });
 
 export const sendTool = defineTool({
@@ -209,6 +268,16 @@ export const sendTool = defineTool({
           isError: true,
         };
       }
+
+      // Validate recipients against whitelist
+      const recipientCheck = validateRecipients(recipients, config.RESEND_ALLOWED_RECIPIENTS);
+      if (!recipientCheck.valid) {
+        const blockedList = recipientCheck.blocked.join(', ');
+        return {
+          content: [{ type: 'text', text: `Error: Recipients not in allowed list: ${blockedList}. Contact administrator to update RESEND_ALLOWED_RECIPIENTS.` }],
+          isError: true,
+        };
+      }
       
       const emailParams: resend.SendEmailParams = {
         from: fromAddress,
@@ -228,6 +297,17 @@ export const sendTool = defineTool({
         const content = processContent(args.body, args.format ?? 'auto');
         if (content.html) emailParams.html = content.html;
         if (content.text) emailParams.text = content.text;
+      }
+
+      // Attachments
+      if (args.attachments && args.attachments.length > 0) {
+        emailParams.attachments = args.attachments.map(att => ({
+          filename: att.filename,
+          ...(att.content && { content: att.content }),
+          ...(att.path && { path: att.path }),
+          ...(att.content_type && { content_type: att.content_type }),
+          ...(att.content_id && { content_id: att.content_id }),
+        }));
       }
 
       const result = await resend.sendEmail(context, emailParams);

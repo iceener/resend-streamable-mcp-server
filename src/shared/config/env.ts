@@ -22,6 +22,7 @@ export type UnifiedConfig = {
   // Resend API
   RESEND_API_KEY?: string;
   RESEND_DEFAULT_FROM?: string;
+  RESEND_ALLOWED_RECIPIENTS?: string[]; // Whitelist of allowed recipient emails/domains
 
   // Rate limiting
   RPS_LIMIT: number;
@@ -38,6 +39,21 @@ function parseBoolean(value: unknown): boolean {
 function parseNumber(value: unknown, defaultValue: number): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : defaultValue;
+}
+
+/**
+ * Parse comma-separated list of allowed recipients (emails or @domain patterns).
+ * Returns undefined if not set (no restriction), or array of patterns.
+ */
+function parseAllowedRecipients(value: unknown): string[] | undefined {
+  if (!value || typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  
+  return trimmed
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /**
@@ -58,7 +74,7 @@ export function parseConfig(env: Record<string, unknown>): UnifiedConfig {
         'Use these tools to manage email contacts, segments, and send emails via Resend.',
     ),
     MCP_VERSION: String(env.MCP_VERSION || '1.0.0'),
-    MCP_PROTOCOL_VERSION: String(env.MCP_PROTOCOL_VERSION || '2025-06-18'),
+    MCP_PROTOCOL_VERSION: String(env.MCP_PROTOCOL_VERSION || '2025-11-25'),
 
     // Auth
     AUTH_ENABLED: authEnabled,
@@ -68,6 +84,7 @@ export function parseConfig(env: Record<string, unknown>): UnifiedConfig {
     // Resend
     RESEND_API_KEY: (env.RESEND_API_KEY as string | undefined)?.trim(),
     RESEND_DEFAULT_FROM: env.RESEND_DEFAULT_FROM as string | undefined,
+    RESEND_ALLOWED_RECIPIENTS: parseAllowedRecipients(env.RESEND_ALLOWED_RECIPIENTS),
 
     // Rate limiting
     RPS_LIMIT: parseNumber(env.RPS_LIMIT, 2), // Resend default is 2 req/s
