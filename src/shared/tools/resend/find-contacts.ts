@@ -2,18 +2,44 @@
  * Find Contacts tool - search and filter contacts.
  */
 
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { toolsMetadata } from '../../../config/metadata.js';
 import { FindContactsOutputSchema } from '../../../schemas/outputs.js';
 import * as resend from '../../../services/resend/client.js';
 import { defineTool, type ToolContext, type ToolResult } from '../types.js';
 
 const InputSchema = z.object({
-  segment: z.string().optional().describe('Filter contacts by segment name (case-insensitive). Only returns contacts in this segment.'),
-  email: z.string().optional().describe('Find a specific contact by exact email address. Returns single contact if found.'),
-  unsubscribed: z.boolean().optional().describe('Filter by subscription status. true = only unsubscribed, false = only subscribed.'),
-  limit: z.number().int().min(1).max(100).optional().describe('Maximum number of contacts to return. Default 50, max 100.'),
-  cursor: z.string().optional().describe('Pagination cursor from previous response. Pass to get next page of results.'),
+  segment: z
+    .string()
+    .optional()
+    .describe(
+      'Filter contacts by segment name (case-insensitive). Only returns contacts in this segment.',
+    ),
+  email: z
+    .string()
+    .optional()
+    .describe(
+      'Find a specific contact by exact email address. Returns single contact if found.',
+    ),
+  unsubscribed: z
+    .boolean()
+    .optional()
+    .describe(
+      'Filter by subscription status. true = only unsubscribed, false = only subscribed.',
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe('Maximum number of contacts to return. Default 50, max 100.'),
+  cursor: z
+    .string()
+    .optional()
+    .describe(
+      'Pagination cursor from previous response. Pass to get next page of results.',
+    ),
 });
 
 export const findContactsTool = defineTool({
@@ -21,6 +47,7 @@ export const findContactsTool = defineTool({
   title: toolsMetadata.find_contacts.title,
   description: toolsMetadata.find_contacts.description,
   inputSchema: InputSchema,
+  outputSchema: FindContactsOutputSchema,
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -31,9 +58,12 @@ export const findContactsTool = defineTool({
     if (args.email && !args.segment) {
       try {
         const contact = await resend.getContact(context, args.email);
-        
+
         // Filter by unsubscribed if specified
-        if (args.unsubscribed !== undefined && contact.unsubscribed !== args.unsubscribed) {
+        if (
+          args.unsubscribed !== undefined &&
+          contact.unsubscribed !== args.unsubscribed
+        ) {
           const structured = FindContactsOutputSchema.parse({
             items: [],
             has_more: false,
@@ -50,7 +80,12 @@ export const findContactsTool = defineTool({
         });
 
         return {
-          content: [{ type: 'text', text: `Found contact: ${contact.email} (${contact.first_name || ''} ${contact.last_name || ''})`.trim() }],
+          content: [
+            {
+              type: 'text',
+              text: `Found contact: ${contact.email} (${contact.first_name || ''} ${contact.last_name || ''})`.trim(),
+            },
+          ],
           structuredContent: structured,
         };
       } catch {
@@ -70,11 +105,16 @@ export const findContactsTool = defineTool({
     if (args.segment) {
       const segmentsResponse = await resend.listSegments(context);
       const segment = segmentsResponse.data.find(
-        s => s.name.toLowerCase() === args.segment!.toLowerCase()
+        (s) => s.name.toLowerCase() === args.segment?.toLowerCase(),
       );
       if (!segment) {
         return {
-          content: [{ type: 'text', text: `Segment "${args.segment}" not found. Use 'segments' tool with action='list' to see available segments.` }],
+          content: [
+            {
+              type: 'text',
+              text: `Segment "${args.segment}" not found. Use 'segments' tool with action='list' to see available segments.`,
+            },
+          ],
           isError: true,
         };
       }
@@ -90,13 +130,14 @@ export const findContactsTool = defineTool({
     // Filter by unsubscribed if specified
     let items = response.data;
     if (args.unsubscribed !== undefined) {
-      items = items.filter(c => c.unsubscribed === args.unsubscribed);
+      items = items.filter((c) => c.unsubscribed === args.unsubscribed);
     }
 
     const structured = FindContactsOutputSchema.parse({
       items,
       has_more: response.has_more,
-      cursor: response.has_more && items.length > 0 ? items[items.length - 1].id : undefined,
+      cursor:
+        response.has_more && items.length > 0 ? items[items.length - 1].id : undefined,
     });
 
     const segmentText = args.segment ? ` in segment "${args.segment}"` : '';

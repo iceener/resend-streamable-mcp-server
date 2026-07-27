@@ -1,43 +1,91 @@
-// MCP server entry point (Node.js/Hono) for Resend MCP
-// Simplified: no OAuth, just bearer token auth
-
-import type { HttpBindings } from '@hono/node-server';
+import {
+  type AuthInfo,
+  type OAuthTokenVerifier,
+  oauthMetadataResponse,
+  type ServerEventBus,
+  type ServerNotifier,
+} from '@modelcontextprotocol/server';
 import { Hono } from 'hono';
-import { createMcpSecurityMiddleware } from '../adapters/http-hono/middleware.security.js';
-import { config } from '../config/env.js';
-import { serverMetadata } from '../config/metadata.js';
-import { buildServer } from '../core/mcp.js';
-import { parseConfig } from '../shared/config/env.js';
-import { createAuthHeaderMiddleware } from './middlewares/auth.js';
-import { corsMiddleware } from './middlewares/cors.js';
-import { healthRoutes } from './routes/health.js';
-import { buildMcpRoutes } from './routes/mcp.js';
+import type { AppConfig } from '../config/env.js';
+import { createMcpRuntime } from '../core/runtime.js';
+import type { ProviderFetch } from '../shared/tools/types.js';
+import { sharedLogger as logger } from '../shared/utils/logger.js';
+import { createAuthServices } from './auth.js';
+import { boundedMcpRequest } from './body.js';
+import {
+  corsPreflightResponse,
+  requestSecurityResponse,
+  withCors,
+} from './security.js';
 
-export function buildHttpApp(): Hono<{ Bindings: HttpBindings }> {
-  const app = new Hono<{ Bindings: HttpBindings }>();
+export interface HttpRuntimeOptions {
+  verifier?: OAuthTokenVerifier;
+  eventBus?: ServerEventBus;
+  providerFetch?: ProviderFetch;
+}
 
-  // Parse unified config
-  const unifiedConfig = parseConfig(process.env as Record<string, unknown>);
+export interface HttpRuntime {
+  fetch(request: Request): Promise<Response>;
+  close(): Promise<void>;
+  notify: ServerNotifier;
+}
 
-  // Build MCP server
-  const server = buildServer({
-    name: config.MCP_TITLE || serverMetadata.title,
-    version: config.MCP_VERSION,
-    instructions: config.MCP_INSTRUCTIONS || serverMetadata.instructions,
+export function buildHttpApp(
+  config: AppConfig,
+  options: HttpRuntimeOptions = {},
+): HttpRuntime {
+  logger.setLevel(config.LOG_LEVEL);
+  const mcp = createMcpRuntime(config, options);
+  const auth = createAuthServices(config, options.verifier);
+  const mcpPath = config.MCP_PUBLIC_URL.pathname;
+  const app = new Hono();
+
+  app.use('*', async (context, next) => {
+    const request = context.req.raw;
+    const rejected = requestSecurityResponse(request, config);
+    if (rejected) return rejected;
+    if (auth?.metadata) {
+      const metadata = oauthMetadataResponse(request, auth.metadata);
+      if (metadata) return metadata;
+    }
+    await next();
   });
 
-  const transports = new Map();
+  app.get('/health', (context) =>
+    context.json({
+      status: 'ok',
+      runtime: 'fetch-native',
+      protocol: '2026-07-28',
+      protocolStatus: 'candidate',
+      sdk: '2.0.0-beta.5',
+      legacyMode: config.MCP_LEGACY_MODE,
+      authMode: config.AUTH_MODE,
+      timestamp: new Date().toISOString(),
+    }),
+  );
 
-  // Global middleware
-  app.use('*', corsMiddleware());
-  app.use('*', createAuthHeaderMiddleware());
+  app.options(mcpPath, (context) => corsPreflightResponse(context.req.raw));
+  app.all(mcpPath, async (context) => {
+    const request = context.req.raw;
+    let authInfo: AuthInfo | undefined;
+    if (auth) {
+      const result = await auth.gate(request);
+      if (result instanceof Response) return withCors(request, result);
+      authInfo = result;
+    }
+    const bounded = await boundedMcpRequest(request, config.MCP_MAX_REQUEST_BYTES);
+    if (bounded.rejection) return withCors(request, bounded.rejection);
+    const response = await mcp.fetch(
+      bounded.request,
+      authInfo ? { authInfo } : undefined,
+    );
+    return withCors(request, response);
+  });
 
-  // Routes
-  app.route('/', healthRoutes());
-
-  // MCP endpoint with security
-  app.use('/mcp', createMcpSecurityMiddleware(unifiedConfig));
-  app.route('/mcp', buildMcpRoutes({ server, transports }));
-
-  return app;
+  app.notFound((context) => context.text('Not Found', 404));
+  return {
+    fetch: async (request) => app.fetch(request),
+    close: mcp.close,
+    notify: mcp.notify,
+  };
 }

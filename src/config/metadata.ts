@@ -2,6 +2,18 @@
  * Centralized tool metadata for the Resend MCP server.
  */
 
+import type { AppConfig } from './env.js';
+
+export function serverImplementation(config: AppConfig) {
+  return {
+    name: config.MCP_NAME,
+    title: config.MCP_TITLE,
+    version: config.MCP_VERSION,
+    description: config.MCP_DESCRIPTION,
+    ...(config.MCP_WEBSITE_URL ? { websiteUrl: config.MCP_WEBSITE_URL.href } : {}),
+  };
+}
+
 export interface ToolMetadata {
   name: string;
   title: string;

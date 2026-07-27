@@ -2,14 +2,20 @@
  * Remove Contacts tool - delete contacts by email.
  */
 
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { toolsMetadata } from '../../../config/metadata.js';
 import { RemoveContactsOutputSchema } from '../../../schemas/outputs.js';
 import * as resend from '../../../services/resend/client.js';
 import { defineTool, type ToolContext, type ToolResult } from '../types.js';
 
 const InputSchema = z.object({
-  emails: z.array(z.string().email()).min(1).max(100).describe('Array of email addresses to delete from the mailing list. Max 100 per call. This permanently removes contacts.'),
+  emails: z
+    .array(z.string().email())
+    .min(1)
+    .max(100)
+    .describe(
+      'Array of email addresses to delete from the mailing list. Max 100 per call. This permanently removes contacts.',
+    ),
 });
 
 export const removeContactsTool = defineTool({
@@ -17,6 +23,7 @@ export const removeContactsTool = defineTool({
   title: toolsMetadata.remove_contacts.title,
   description: toolsMetadata.remove_contacts.description,
   inputSchema: InputSchema,
+  outputSchema: RemoveContactsOutputSchema,
   annotations: {
     readOnlyHint: false,
     destructiveHint: true,
@@ -40,10 +47,10 @@ export const removeContactsTool = defineTool({
         results.push({ email, ok: true, id: result.id });
         deleted++;
       } catch (error) {
-        results.push({ 
-          email, 
-          ok: false, 
-          error: (error as Error).message 
+        results.push({
+          email,
+          ok: false,
+          error: (error as Error).message,
         });
         failed++;
       }

@@ -2,22 +2,29 @@
  * Subscriptions tool - manage contact topic preferences.
  */
 
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { toolsMetadata } from '../../../config/metadata.js';
 import { SubscriptionsOutputSchema } from '../../../schemas/outputs.js';
 import * as resend from '../../../services/resend/client.js';
 import { defineTool, type ToolContext, type ToolResult } from '../types.js';
 
 const InputSchema = z.object({
-  emails: z.union([z.string().email(), z.array(z.string().email())]).describe(
-    'Contact email(s) to update subscription preferences. Single email or array up to 100.'
-  ),
-  action: z.enum(['subscribe', 'unsubscribe', 'unsubscribe_all']).describe(
-    'Action: "subscribe" = opt-in to topic, "unsubscribe" = opt-out from topic, "unsubscribe_all" = global unsubscribe from all emails'
-  ),
-  topic: z.string().optional().describe(
-    'Topic name (required for subscribe/unsubscribe). Topics are used to segment email types e.g. "Newsletter", "Product Updates". Not required for unsubscribe_all.'
-  ),
+  emails: z
+    .union([z.string().email(), z.array(z.string().email())])
+    .describe(
+      'Contact email(s) to update subscription preferences. Single email or array up to 100.',
+    ),
+  action: z
+    .enum(['subscribe', 'unsubscribe', 'unsubscribe_all'])
+    .describe(
+      'Action: "subscribe" = opt-in to topic, "unsubscribe" = opt-out from topic, "unsubscribe_all" = global unsubscribe from all emails',
+    ),
+  topic: z
+    .string()
+    .optional()
+    .describe(
+      'Topic name (required for subscribe/unsubscribe). Topics are used to segment email types e.g. "Newsletter", "Product Updates". Not required for unsubscribe_all.',
+    ),
 });
 
 export const subscriptionsTool = defineTool({
@@ -25,6 +32,7 @@ export const subscriptionsTool = defineTool({
   title: toolsMetadata.subscriptions.title,
   description: toolsMetadata.subscriptions.description,
   inputSchema: InputSchema,
+  outputSchema: SubscriptionsOutputSchema,
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -36,7 +44,12 @@ export const subscriptionsTool = defineTool({
 
     if (emails.length > 100) {
       return {
-        content: [{ type: 'text', text: 'Error: Maximum 100 emails per call. Split into multiple calls for larger batches.' }],
+        content: [
+          {
+            type: 'text',
+            text: 'Error: Maximum 100 emails per call. Split into multiple calls for larger batches.',
+          },
+        ],
         isError: true,
       };
     }
@@ -44,7 +57,12 @@ export const subscriptionsTool = defineTool({
     // For topic-specific actions, validate topic is provided
     if ((args.action === 'subscribe' || args.action === 'unsubscribe') && !args.topic) {
       return {
-        content: [{ type: 'text', text: `Error: "topic" is required for ${args.action} action. Provide the topic name.` }],
+        content: [
+          {
+            type: 'text',
+            text: `Error: "topic" is required for ${args.action} action. Provide the topic name.`,
+          },
+        ],
         isError: true,
       };
     }
@@ -54,11 +72,16 @@ export const subscriptionsTool = defineTool({
     if (args.topic) {
       const topics = await resend.listTopics(context);
       const topic = topics.data.find(
-        t => t.name.toLowerCase() === args.topic!.toLowerCase()
+        (t) => t.name.toLowerCase() === args.topic?.toLowerCase(),
       );
       if (!topic) {
         return {
-          content: [{ type: 'text', text: `Topic "${args.topic}" not found. Available topics can be found in the Resend dashboard.` }],
+          content: [
+            {
+              type: 'text',
+              text: `Topic "${args.topic}" not found. Available topics can be found in the Resend dashboard.`,
+            },
+          ],
           isError: true,
         };
       }
@@ -78,7 +101,7 @@ export const subscriptionsTool = defineTool({
           // Topic-specific subscription (Resend uses opt_in/opt_out)
           const subscription = args.action === 'subscribe' ? 'opt_in' : 'opt_out';
           await resend.updateContactTopics(context, email, [
-            { id: topicId, subscription }
+            { id: topicId, subscription },
           ]);
         }
         results.push({ email, ok: true });

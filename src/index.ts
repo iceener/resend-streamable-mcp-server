@@ -1,58 +1,41 @@
-import { serve } from '@hono/node-server';
-import { config } from './config/env.js';
-import { stopContextCleanup } from './core/context.js';
+import { parseConfig } from './config/env.js';
 import { buildHttpApp } from './http/app.js';
-import { MemorySessionStore, MemoryTokenStore } from './shared/storage/memory.js';
-import { initializeStorage } from './shared/storage/singleton.js';
-import { logger } from './utils/logger.js';
+import { sharedLogger as logger } from './shared/utils/logger.js';
 
-// Store references for graceful shutdown
-let tokenStore: MemoryTokenStore | null = null;
-let sessionStore: MemorySessionStore | null = null;
+const config = parseConfig(process.env);
+const runtime = buildHttpApp(config);
+const server = Bun.serve({
+  hostname: config.HOST,
+  port: config.PORT,
+  fetch: (request) => runtime.fetch(request),
+});
 
-async function main(): Promise<void> {
-  try {
-    // Initialize storage (in-memory for Resend MCP - no OAuth token persistence needed)
-    tokenStore = new MemoryTokenStore();
-    sessionStore = new MemorySessionStore();
-    initializeStorage(tokenStore, sessionStore);
+logger.info('server', {
+  message: 'Resend MCP server started',
+  url: config.MCP_PUBLIC_URL.href,
+  protocol: '2026-07-28-candidate',
+  sdk: '2.0.0-beta.5',
+  legacyMode: config.MCP_LEGACY_MODE,
+  authMode: config.AUTH_MODE,
+});
 
-    const app = buildHttpApp();
-    serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST });
-
-    await logger.info('server', {
-      message: `Resend MCP server started on http://${config.HOST}:${config.PORT}/mcp`,
-      environment: config.NODE_ENV,
-      authEnabled: config.AUTH_ENABLED,
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    await logger.error('server', {
-      message: 'Server startup failed',
-      error: (error as Error).message,
-    });
-    process.exit(1);
-  }
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info('server', { message: 'Shutting down', signal });
+  const gracefulStop = server.stop(false);
+  await runtime.close();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const stopped = await Promise.race([
+    gracefulStop.then(() => true),
+    new Promise<false>((resolve) => {
+      timeout = setTimeout(() => resolve(false), 5_000);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  if (!stopped) await server.stop(true);
 }
 
-function gracefulShutdown(signal: string): void {
-  void logger.info('server', { message: `Received ${signal}, shutting down` });
-
-  // Stop cleanup intervals
-  stopContextCleanup();
-
-  // Stop store cleanup
-  if (tokenStore) {
-    tokenStore.stopCleanup();
-  }
-  if (sessionStore) {
-    sessionStore.stopCleanup();
-  }
-
-  process.exit(0);
-}
-
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-void main();
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));

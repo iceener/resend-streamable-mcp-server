@@ -2,6 +2,8 @@
 
 Streamable HTTP MCP server for email and newsletter management via [Resend](https://resend.com).
 
+> Protocol status: candidate `2026-07-28`, using exact MCP server/client `2.0.0-beta.5`. This is not a claim of final protocol conformance.
+
 Author: [overment](https://x.com/_overment)
 
 > [!WARNING]
@@ -32,7 +34,9 @@ The result: an agent that can reliably manage your newsletter without you touchi
 - ✅ **Templates** — List available templates with variables
 - ✅ **Subscriptions** — Topic opt-in/opt-out management
 - ✅ **Multipart Emails** — Auto-generates HTML + plain text for best deliverability
-- ✅ **Dual Runtime** — Node.js/Bun or Cloudflare Workers
+- ✅ **Dual Runtime** — Fetch-native Bun or Cloudflare Workers
+- ✅ **Modern + Legacy** — Candidate `2026-07-28` plus SDK stateless legacy fallback
+- ✅ **Credential Separation** — MCP access tokens are never forwarded to Resend
 
 ### Design Principles
 
@@ -91,11 +95,10 @@ Edit `.env`:
 
 ```env
 PORT=3000
-AUTH_ENABLED=true
-AUTH_STRATEGY=bearer
+MCP_AUTH_MODE=static-bearer
 
 # Generate with: openssl rand -hex 32
-BEARER_TOKEN=your-random-auth-token
+MCP_BEARER_TOKEN=your-random-auth-token
 
 # Resend credentials
 RESEND_API_KEY=re_your_resend_api_key
@@ -114,7 +117,7 @@ bun dev
 **Alice App:**
 - URL: `http://127.0.0.1:3000/mcp`
 - Type: `streamable-http`
-- Header: `Authorization: Bearer <your-BEARER_TOKEN>`
+- Header: `Authorization: Bearer <your-MCP_BEARER_TOKEN>`
 
 **Claude Desktop / Cursor:**
 
@@ -388,12 +391,12 @@ Updated 1 contact(s). Success: 1, Failed: 0.
 ┌─────────────────────────────────────────────────────────────────┐
 │  Client (Alice App, Claude Desktop)                             │
 │      │                                                          │
-│      │ Authorization: Bearer <BEARER_TOKEN>                     │
+│      │ Authorization: Bearer <MCP_BEARER_TOKEN>                 │
 │      ▼                                                          │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │  MCP Server (Node.js / Cloudflare Worker)                   ││
 │  │                                                             ││
-│  │  1. Validate BEARER_TOKEN (client auth)                     ││
+│  │  1. Validate MCP_BEARER_TOKEN or OAuth RS token             ││
 │  │  2. Use RESEND_API_KEY internally                           ││
 │  │                                                             ││
 │  │  RESEND_API_KEY ──────────► Resend API                      ││
@@ -403,8 +406,8 @@ Updated 1 contact(s). Success: 1, Failed: 0.
 ```
 
 **Key points:**
-- `BEARER_TOKEN`: Random token you generate — authenticates MCP clients
-- `RESEND_API_KEY`: Your Resend API key — never exposed to clients
+- `MCP_BEARER_TOKEN`: Optional random MCP client token; legacy `BEARER_TOKEN` remains a compatibility alias
+- `RESEND_API_KEY`: Server-side Resend key — never exposed to clients and never sourced from an MCP bearer
 - `RESEND_DEFAULT_FROM`: Verified sender address — required
 
 ---
@@ -422,7 +425,7 @@ bun dev
 
 ```bash
 # Create .dev.vars with secrets
-echo "BEARER_TOKEN=your_token" >> .dev.vars
+echo "MCP_BEARER_TOKEN=your_token" >> .dev.vars
 echo "RESEND_API_KEY=re_xxx" >> .dev.vars
 echo "RESEND_DEFAULT_FROM=newsletter@yourdomain.com" >> .dev.vars
 
@@ -434,7 +437,7 @@ bun x wrangler dev --local | cat
 
 ```bash
 # Set secrets
-bun x wrangler secret put BEARER_TOKEN
+bun x wrangler secret put MCP_BEARER_TOKEN
 bun x wrangler secret put RESEND_API_KEY
 bun x wrangler secret put RESEND_DEFAULT_FROM
 
@@ -449,9 +452,9 @@ bun x wrangler deploy
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/mcp` | POST | MCP JSON-RPC 2.0 |
-| `/mcp` | GET | SSE stream (for notifications) |
-| `/health` | GET | Health check |
+| `/mcp` | POST | Modern or stateless-legacy MCP exchange |
+| `/mcp` | GET, DELETE | `405 Method Not Allowed` (no server-created sessions) |
+| `/health` | GET | Candidate protocol/runtime status |
 
 ---
 
@@ -461,11 +464,13 @@ bun x wrangler deploy
 |----------|----------|-------------|
 | `RESEND_API_KEY` | ✓ | Resend API key from resend.com/api-keys |
 | `RESEND_DEFAULT_FROM` | ✓ | Verified sender address (e.g., newsletter@yourdomain.com) |
-| `BEARER_TOKEN` | ✓ | Auth token for MCP clients (generate with `openssl rand -hex 32`) |
+| `MCP_AUTH_MODE` | | `none`, `static-bearer`, or `oauth` (default: `none`) |
+| `MCP_BEARER_TOKEN` | For static auth | MCP client token (legacy `BEARER_TOKEN` is accepted) |
+| `MCP_PUBLIC_URL` | Production | Canonical MCP resource URL |
+| `MCP_ALLOWED_HOSTS` | | Strict Host allowlist |
+| `MCP_ALLOWED_ORIGIN_HOSTNAMES` | | Strict browser Origin hostname allowlist |
 | `PORT` | | Server port (default: 3000) |
 | `HOST` | | Server host (default: 127.0.0.1) |
-| `AUTH_ENABLED` | | Enable auth (default: true) |
-| `AUTH_STRATEGY` | | Auth strategy (default: bearer) |
 | `LOG_LEVEL` | | debug, info, warn, error (default: info) |
 
 ---
@@ -474,33 +479,14 @@ bun x wrangler deploy
 
 ```
 src/
-├── index.ts                    # Node.js entry point
-├── worker.ts                   # Cloudflare Workers entry point
-├── config/
-│   ├── env.ts                  # Environment parsing
-│   └── metadata.ts             # Server & tool descriptions
-├── core/
-│   └── mcp.ts                  # McpServer builder
-├── shared/
-│   └── tools/
-│       └── resend/             # Tool definitions
-│           ├── upsert-contacts.ts
-│           ├── remove-contacts.ts
-│           ├── find-contacts.ts
-│           ├── segments.ts
-│           ├── send.ts
-│           ├── campaigns.ts
-│           ├── subscriptions.ts
-│           └── templates.ts
-├── services/
-│   └── resend/
-│       └── client.ts           # Resend API client
-├── schemas/
-│   └── outputs.ts              # Zod output schemas
-└── http/
-    ├── app.ts                  # Hono HTTP app
-    └── routes/
-        └── mcp.ts              # MCP endpoint handler
+├── index.ts                    # Bun fetch entry
+├── worker.ts                   # Cloudflare Workers entry
+├── config/                     # Validated runtime/provider config + metadata
+├── core/                       # Fresh McpServer factory + isolate handler
+├── http/                       # Auth, body bounds, Host/Origin/CORS boundary
+├── services/resend/client.ts   # Preserved Resend provider client
+├── schemas/outputs.ts          # Complete Zod v4 output schemas
+└── shared/tools/resend/        # Preserved email/contact/campaign/template tools
 ```
 
 ---
@@ -508,8 +494,8 @@ src/
 ## Development
 
 ```bash
-bun dev           # Start with hot reload (note: sessions clear on reload)
-bun start         # Production mode (stable sessions)
+bun dev           # Start with hot reload
+bun start         # Run the stateless HTTP server
 bun run typecheck # TypeScript check
 bun run lint      # Lint code
 bun run build     # Production build
@@ -520,7 +506,7 @@ bun run build     # Production build
 ```bash
 bunx @modelcontextprotocol/inspector
 # Connect to: http://localhost:3000/mcp
-# Add header: Authorization: Bearer <your-BEARER_TOKEN>
+# For static auth: Authorization: Bearer <your-MCP_BEARER_TOKEN>
 ```
 
 ---
@@ -529,15 +515,14 @@ bunx @modelcontextprotocol/inspector
 
 | Issue | Solution |
 |-------|----------|
-| 401 Unauthorized | Check `BEARER_TOKEN` matches in server and client |
+| 401 Unauthorized | Check `MCP_AUTH_MODE` and `MCP_BEARER_TOKEN`, or the configured OAuth RS token |
 | "RESEND_API_KEY not configured" | Set `RESEND_API_KEY` in `.env` or secrets |
 | "RESEND_DEFAULT_FROM not configured" | Set `RESEND_DEFAULT_FROM` to a verified sender |
 | "Segment not found" | Use `segments(action='list')` to see available segments |
 | "Template not found" | Ensure template is published in Resend dashboard |
 | No newlines in email | Already fixed — emails are multipart (HTML + text) |
-| Stale session after restart | Disconnect and reconnect client (hot reload clears sessions) |
 | Rate limit (429) | Resend default is 2 req/s. Wait for `retry-after` header |
-| Tools not showing | Reconnect client — session may be stale |
+| Tools not showing | Reconnect the client and verify it negotiated modern `2026-07-28` or the stateless legacy fallback |
 
 ---
 

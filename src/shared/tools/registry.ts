@@ -1,143 +1,129 @@
-/**
- * Shared tool registry for Resend MCP.
- * Tools defined here work in both Node.js and Cloudflare Workers.
- */
+import type { McpServer, ServerContext } from '@modelcontextprotocol/server';
+import type { AppConfig } from '../../config/env.js';
+import { campaignsTool } from './resend/campaigns.js';
+import { findContactsTool } from './resend/find-contacts.js';
+import { removeContactsTool } from './resend/remove-contacts.js';
+import { segmentsTool } from './resend/segments.js';
+import { sendTool } from './resend/send.js';
+import { subscriptionsTool } from './resend/subscriptions.js';
+import { templatesTool } from './resend/templates.js';
+import { upsertContactsTool } from './resend/upsert-contacts.js';
+import type { ProviderFetch, ToolContext } from './types.js';
 
-import type { ZodObject, ZodRawShape } from 'zod';
-import {
-  upsertContactsTool,
-  removeContactsTool,
-  findContactsTool,
-  segmentsTool,
-  sendTool,
-  campaignsTool,
-  subscriptionsTool,
-  templatesTool,
-} from './resend/index.js';
-import type { ToolContext, ToolResult } from './types.js';
-
-// Re-export types for convenience
-export type { SharedToolDefinition, ToolContext, ToolResult } from './types.js';
-export { defineTool } from './types.js';
-
-/**
- * Simplified tool interface for the registry (type-erased for storage).
- */
-export interface RegisteredTool {
-  name: string;
-  title?: string;
-  description: string;
-  inputSchema: ZodObject<ZodRawShape>;
-  outputSchema?: ZodRawShape;
-  annotations?: Record<string, unknown>;
-  handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
+export interface ToolRegistrationOptions {
+  providerFetch?: ProviderFetch;
 }
 
-/**
- * All shared tools available in both runtimes.
- */
-export const sharedTools: RegisteredTool[] = [
-  // Contact management
-  upsertContactsTool as unknown as RegisteredTool,
-  removeContactsTool as unknown as RegisteredTool,
-  findContactsTool as unknown as RegisteredTool,
-  
-  // Segment management
-  segmentsTool as unknown as RegisteredTool,
-  
-  // Email sending
-  sendTool as unknown as RegisteredTool,
-  
-  // Campaign management
-  campaignsTool as unknown as RegisteredTool,
-  
-  // Subscription management
-  subscriptionsTool as unknown as RegisteredTool,
-  
-  // Templates
-  templatesTool as unknown as RegisteredTool,
-];
-
-/**
- * Get a tool by name.
- */
-export function getSharedTool(name: string): RegisteredTool | undefined {
-  return sharedTools.find((t) => t.name === name);
+function toolContext(
+  ctx: ServerContext,
+  config: AppConfig,
+  options: ToolRegistrationOptions,
+): ToolContext {
+  return {
+    signal: ctx.mcpReq.signal,
+    resendApiKey: config.RESEND_API_KEY,
+    resendDefaultFrom: config.RESEND_DEFAULT_FROM,
+    resendAllowedRecipients: config.RESEND_ALLOWED_RECIPIENTS,
+    ...(options.providerFetch ? { providerFetch: options.providerFetch } : {}),
+  };
 }
 
-/**
- * Get all tool names.
- */
-export function getSharedToolNames(): string[] {
-  return sharedTools.map((t) => t.name);
-}
-
-/**
- * Execute a shared tool by name.
- * Handles input validation, output validation, and error wrapping.
- */
-export async function executeSharedTool(
-  name: string,
-  args: Record<string, unknown>,
-  context: ToolContext,
-): Promise<ToolResult> {
-  const tool = getSharedTool(name);
-  if (!tool) {
-    return {
-      content: [{ type: 'text', text: `Unknown tool: ${name}` }],
-      isError: true,
-    };
-  }
-
-  try {
-    // Check for cancellation before starting
-    if (context.signal?.aborted) {
-      return {
-        content: [{ type: 'text', text: 'Operation was cancelled' }],
-        isError: true,
-      };
-    }
-
-    // Validate input using Zod schema
-    const parseResult = tool.inputSchema.safeParse(args);
-    if (!parseResult.success) {
-      const errors = parseResult.error.errors
-        .map((e: { path: (string | number)[]; message: string }) => `${e.path.join('.')}: ${e.message}`)
-        .join(', ');
-      return {
-        content: [{ type: 'text', text: `Invalid input: ${errors}` }],
-        isError: true,
-      };
-    }
-
-    const result = await tool.handler(parseResult.data as Record<string, unknown>, context);
-
-    // Validate outputSchema compliance (per MCP spec)
-    if (tool.outputSchema && !result.isError) {
-      if (!result.structuredContent) {
-        return {
-          content: [{
-            type: 'text',
-            text: 'Tool with outputSchema must return structuredContent (unless isError is true)',
-          }],
-          isError: true,
-        };
-      }
-    }
-
-    return result;
-  } catch (error) {
-    // Check if this was an abort
-    if (context.signal?.aborted) {
-      return {
-        content: [{ type: 'text', text: 'Operation was cancelled' }],
-        isError: true,
-      };
-    }
-
-    return {
-      content: [{ type: 'text', text: `Tool error: ${(error as Error).message}` }],
-      isError: true,
-    };
-  }
+/** Register every existing Resend tool in its stable order. */
+export function registerTools(
+  server: McpServer,
+  config: AppConfig,
+  options: ToolRegistrationOptions = {},
+): void {
+  server.registerTool(
+    upsertContactsTool.name,
+    {
+      title: upsertContactsTool.title,
+      description: upsertContactsTool.description,
+      inputSchema: upsertContactsTool.inputSchema,
+      outputSchema: upsertContactsTool.outputSchema,
+      annotations: upsertContactsTool.annotations,
+    },
+    async (args, ctx) =>
+      upsertContactsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    removeContactsTool.name,
+    {
+      title: removeContactsTool.title,
+      description: removeContactsTool.description,
+      inputSchema: removeContactsTool.inputSchema,
+      outputSchema: removeContactsTool.outputSchema,
+      annotations: removeContactsTool.annotations,
+    },
+    async (args, ctx) =>
+      removeContactsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    findContactsTool.name,
+    {
+      title: findContactsTool.title,
+      description: findContactsTool.description,
+      inputSchema: findContactsTool.inputSchema,
+      outputSchema: findContactsTool.outputSchema,
+      annotations: findContactsTool.annotations,
+    },
+    async (args, ctx) =>
+      findContactsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    segmentsTool.name,
+    {
+      title: segmentsTool.title,
+      description: segmentsTool.description,
+      inputSchema: segmentsTool.inputSchema,
+      outputSchema: segmentsTool.outputSchema,
+      annotations: segmentsTool.annotations,
+    },
+    async (args, ctx) => segmentsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    sendTool.name,
+    {
+      title: sendTool.title,
+      description: sendTool.description,
+      inputSchema: sendTool.inputSchema,
+      outputSchema: sendTool.outputSchema,
+      annotations: sendTool.annotations,
+    },
+    async (args, ctx) => sendTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    campaignsTool.name,
+    {
+      title: campaignsTool.title,
+      description: campaignsTool.description,
+      inputSchema: campaignsTool.inputSchema,
+      outputSchema: campaignsTool.outputSchema,
+      annotations: campaignsTool.annotations,
+    },
+    async (args, ctx) => campaignsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    subscriptionsTool.name,
+    {
+      title: subscriptionsTool.title,
+      description: subscriptionsTool.description,
+      inputSchema: subscriptionsTool.inputSchema,
+      outputSchema: subscriptionsTool.outputSchema,
+      annotations: subscriptionsTool.annotations,
+    },
+    async (args, ctx) =>
+      subscriptionsTool.handler(args, toolContext(ctx, config, options)),
+  );
+  server.registerTool(
+    templatesTool.name,
+    {
+      title: templatesTool.title,
+      description: templatesTool.description,
+      inputSchema: templatesTool.inputSchema,
+      outputSchema: templatesTool.outputSchema,
+      annotations: templatesTool.annotations,
+    },
+    async (args, ctx) => templatesTool.handler(args, toolContext(ctx, config, options)),
+  );
 }

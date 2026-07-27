@@ -2,9 +2,8 @@
  * Resend API client for MCP tools.
  */
 
-import { config } from '../../config/env.js';
 import type { ToolContext } from '../../shared/tools/types.js';
-import { logger } from '../../utils/logger.js';
+import { sharedLogger as logger } from '../../shared/utils/logger.js';
 
 const RESEND_API_BASE = 'https://api.resend.com';
 
@@ -24,24 +23,24 @@ export interface PaginatedResponse<T> {
  * Get the Resend API key from server config.
  * The API key is stored server-side, clients authenticate with BEARER_TOKEN.
  */
-function getApiKey(): string {
-  if (!config.RESEND_API_KEY) {
+function getApiKey(context: ToolContext): string {
+  if (!context.resendApiKey) {
     throw new Error('RESEND_API_KEY not configured. Set it in environment.');
   }
-  return config.RESEND_API_KEY;
+  return context.resendApiKey;
 }
 
 async function request<T>(
   context: ToolContext,
   method: string,
   path: string,
-  body?: Record<string, unknown>,
+  body?: object,
   queryParams?: Record<string, string | number | undefined>,
 ): Promise<T> {
-  const token = getApiKey();
+  const token = getApiKey(context);
 
   let url = `${RESEND_API_BASE}${path}`;
-  
+
   // Add query params
   if (queryParams) {
     const params = new URLSearchParams();
@@ -57,13 +56,13 @@ async function request<T>(
   }
 
   const headers: Record<string, string> = {
-    'Authorization': `Bearer ${token}`,
+    Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
 
   logger.debug('resend_client', { message: 'API request', method, path });
 
-  const response = await fetch(url, {
+  const response = await (context.providerFetch ?? fetch)(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -71,11 +70,13 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ message: response.statusText })) as { message?: string };
-    logger.error('resend_client', { 
-      message: 'API error', 
-      status: response.status, 
-      error: errorData 
+    const errorData = (await response
+      .json()
+      .catch(() => ({ message: response.statusText }))) as { message?: string };
+    logger.error('resend_client', {
+      message: 'API error',
+      status: response.status,
+      error: errorData,
     });
     throw new Error(errorData.message || `Resend API error: ${response.status}`);
   }
@@ -109,7 +110,7 @@ export async function createContact(
   context: ToolContext,
   params: CreateContactParams,
 ): Promise<{ object: string; id: string }> {
-  return request(context, 'POST', '/contacts', params as unknown as Record<string, unknown>);
+  return request(context, 'POST', '/contacts', params);
 }
 
 export async function getContact(
@@ -124,7 +125,12 @@ export async function updateContact(
   idOrEmail: string,
   params: Partial<Omit<CreateContactParams, 'email'>>,
 ): Promise<{ object: string; id: string }> {
-  return request(context, 'PATCH', `/contacts/${encodeURIComponent(idOrEmail)}`, params);
+  return request(
+    context,
+    'PATCH',
+    `/contacts/${encodeURIComponent(idOrEmail)}`,
+    params,
+  );
 }
 
 export async function deleteContact(
@@ -152,7 +158,11 @@ export async function addContactToSegment(
   contactIdOrEmail: string,
   segmentId: string,
 ): Promise<{ object: string; id: string }> {
-  return request(context, 'POST', `/contacts/${encodeURIComponent(contactIdOrEmail)}/segments/${segmentId}`);
+  return request(
+    context,
+    'POST',
+    `/contacts/${encodeURIComponent(contactIdOrEmail)}/segments/${segmentId}`,
+  );
 }
 
 export async function removeContactFromSegment(
@@ -160,7 +170,11 @@ export async function removeContactFromSegment(
   contactIdOrEmail: string,
   segmentId: string,
 ): Promise<{ object: string; id: string; deleted: boolean }> {
-  return request(context, 'DELETE', `/contacts/${encodeURIComponent(contactIdOrEmail)}/segments/${segmentId}`);
+  return request(
+    context,
+    'DELETE',
+    `/contacts/${encodeURIComponent(contactIdOrEmail)}/segments/${segmentId}`,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,7 +259,7 @@ export async function sendEmail(
   context: ToolContext,
   params: SendEmailParams,
 ): Promise<SentEmail> {
-  return request(context, 'POST', '/emails', params as unknown as Record<string, unknown>);
+  return request(context, 'POST', '/emails', params);
 }
 
 export interface Email {
@@ -264,10 +278,7 @@ export interface Email {
   scheduled_at?: string;
 }
 
-export async function getEmail(
-  context: ToolContext,
-  emailId: string,
-): Promise<Email> {
+export async function getEmail(context: ToolContext, emailId: string): Promise<Email> {
   return request(context, 'GET', `/emails/${emailId}`);
 }
 
@@ -317,7 +328,7 @@ export async function createBroadcast(
   context: ToolContext,
   params: CreateBroadcastParams,
 ): Promise<{ id: string }> {
-  return request(context, 'POST', '/broadcasts', params as unknown as Record<string, unknown>);
+  return request(context, 'POST', '/broadcasts', params);
 }
 
 export async function sendBroadcast(
@@ -325,8 +336,12 @@ export async function sendBroadcast(
   broadcastId: string,
   scheduledAt?: string,
 ): Promise<{ id: string }> {
-  return request(context, 'POST', `/broadcasts/${broadcastId}/send`, 
-    scheduledAt ? { scheduled_at: scheduledAt } : undefined);
+  return request(
+    context,
+    'POST',
+    `/broadcasts/${broadcastId}/send`,
+    scheduledAt ? { scheduled_at: scheduledAt } : undefined,
+  );
 }
 
 export async function getBroadcast(
@@ -370,10 +385,7 @@ export async function listTopics(
   return request(context, 'GET', '/topics', undefined, options);
 }
 
-export async function getTopic(
-  context: ToolContext,
-  topicId: string,
-): Promise<Topic> {
+export async function getTopic(context: ToolContext, topicId: string): Promise<Topic> {
   return request(context, 'GET', `/topics/${topicId}`);
 }
 
@@ -391,7 +403,11 @@ export async function getContactTopics(
   context: ToolContext,
   contactIdOrEmail: string,
 ): Promise<PaginatedResponse<ContactTopicSubscription>> {
-  return request(context, 'GET', `/contacts/${encodeURIComponent(contactIdOrEmail)}/topics`);
+  return request(
+    context,
+    'GET',
+    `/contacts/${encodeURIComponent(contactIdOrEmail)}/topics`,
+  );
 }
 
 export async function updateContactTopics(
@@ -399,7 +415,12 @@ export async function updateContactTopics(
   contactIdOrEmail: string,
   topics: Array<{ id: string; subscription: 'opt_in' | 'opt_out' }>,
 ): Promise<{ id: string }> {
-  return request(context, 'PATCH', `/contacts/${encodeURIComponent(contactIdOrEmail)}/topics`, { topics });
+  return request(
+    context,
+    'PATCH',
+    `/contacts/${encodeURIComponent(contactIdOrEmail)}/topics`,
+    { topics },
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,4 +466,3 @@ export async function getTemplate(
 ): Promise<Template> {
   return request(context, 'GET', `/templates/${encodeURIComponent(idOrAlias)}`);
 }
-

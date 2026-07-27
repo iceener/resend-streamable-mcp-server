@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Common schemas
@@ -32,17 +32,19 @@ export const ContactSchema = z.object({
   last_name: z.string().optional(),
   unsubscribed: z.boolean(),
   created_at: z.string(),
-  properties: z.record(z.union([z.string(), z.number()])).optional(),
+  properties: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
 });
 
 export const UpsertContactsOutputSchema = z.object({
-  results: z.array(z.object({
-    email: z.string(),
-    ok: z.boolean(),
-    id: z.string().optional(),
-    action: z.enum(['created', 'updated']).optional(),
-    error: z.string().optional(),
-  })),
+  results: z.array(
+    z.object({
+      email: z.string(),
+      ok: z.boolean(),
+      id: z.string().optional(),
+      action: z.enum(['created', 'updated']).optional(),
+      error: z.string().optional(),
+    }),
+  ),
   summary: z.object({
     created: z.number(),
     updated: z.number(),
@@ -60,9 +62,11 @@ export const RemoveContactsOutputSchema = z.object({
 });
 export type RemoveContactsOutput = z.infer<typeof RemoveContactsOutputSchema>;
 
-export const FindContactsOutputSchema = z.object({
-  items: z.array(ContactSchema),
-}).merge(PageInfoSchema);
+export const FindContactsOutputSchema = z
+  .object({
+    items: z.array(ContactSchema),
+  })
+  .merge(PageInfoSchema);
 export type FindContactsOutput = z.infer<typeof FindContactsOutputSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,10 +80,25 @@ export const SegmentSchema = z.object({
   created_at: z.string(),
 });
 
-export const SegmentsListOutputSchema = z.object({
-  items: z.array(SegmentSchema),
-}).merge(PageInfoSchema);
+export const SegmentsListOutputSchema = z
+  .object({
+    items: z.array(SegmentSchema),
+  })
+  .merge(PageInfoSchema);
 export type SegmentsListOutput = z.infer<typeof SegmentsListOutputSchema>;
+
+export const SegmentsOutputSchema = z.object({
+  items: z.array(SegmentSchema).optional(),
+  has_more: z.boolean().optional(),
+  cursor: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  ok: z.boolean().optional(),
+  action: z.enum(['created', 'deleted']).optional(),
+  segment: z.string().optional(),
+  results: z.array(BatchResultSchema).optional(),
+  summary: BatchSummarySchema.optional(),
+});
 
 export const SegmentActionOutputSchema = z.object({
   id: z.string(),
@@ -118,6 +137,16 @@ export const SendBroadcastOutputSchema = z.object({
 });
 export type SendBroadcastOutput = z.infer<typeof SendBroadcastOutputSchema>;
 
+export const SendOutputSchema = z.object({
+  id: z.string().optional(),
+  to: z.array(z.string()).optional(),
+  campaign_id: z.string().optional(),
+  segment: z.string().optional(),
+  subject: z.string(),
+  status: z.enum(['sent', 'scheduled', 'queued']),
+  scheduled_at: z.string().optional(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Campaigns
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,9 +163,11 @@ export const CampaignSchema = z.object({
   scheduled_at: z.string().optional(),
 });
 
-export const CampaignsListOutputSchema = z.object({
-  items: z.array(CampaignSchema),
-}).merge(PageInfoSchema);
+export const CampaignsListOutputSchema = z
+  .object({
+    items: z.array(CampaignSchema),
+  })
+  .merge(PageInfoSchema);
 export type CampaignsListOutput = z.infer<typeof CampaignsListOutputSchema>;
 
 export const CampaignStatusOutputSchema = z.object({
@@ -155,6 +186,20 @@ export const CampaignCancelOutputSchema = z.object({
   cancelled: z.boolean(),
 });
 export type CampaignCancelOutput = z.infer<typeof CampaignCancelOutputSchema>;
+
+export const CampaignsOutputSchema = z.object({
+  items: z.array(CampaignSchema).optional(),
+  has_more: z.boolean().optional(),
+  cursor: z.string().optional(),
+  id: z.string().optional(),
+  status: z.string().optional(),
+  sent_count: z.number().optional(),
+  delivered_count: z.number().optional(),
+  opened_count: z.number().optional(),
+  clicked_count: z.number().optional(),
+  bounced_count: z.number().optional(),
+  cancelled: z.boolean().optional(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Subscriptions
@@ -186,7 +231,9 @@ export const TemplateSchema = z.object({
   created_at: z.string(),
 });
 
-export const TemplatesListOutputSchema = z.object({
-  items: z.array(TemplateSchema),
-}).merge(PageInfoSchema);
+export const TemplatesListOutputSchema = z
+  .object({
+    items: z.array(TemplateSchema),
+  })
+  .merge(PageInfoSchema);
 export type TemplatesListOutput = z.infer<typeof TemplatesListOutputSchema>;

@@ -2,23 +2,47 @@
  * Upsert Contacts tool - add or update contacts in bulk.
  */
 
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { toolsMetadata } from '../../../config/metadata.js';
 import { UpsertContactsOutputSchema } from '../../../schemas/outputs.js';
 import * as resend from '../../../services/resend/client.js';
 import { defineTool, type ToolContext, type ToolResult } from '../types.js';
 
 const ContactInputSchema = z.object({
-  email: z.string().email().describe('Email address of the contact (required, used as unique identifier)'),
+  email: z
+    .string()
+    .email()
+    .describe('Email address of the contact (required, used as unique identifier)'),
   first_name: z.string().optional().describe('First name of the contact'),
   last_name: z.string().optional().describe('Last name of the contact'),
-  properties: z.record(z.union([z.string(), z.number()])).optional().describe('Custom properties as key-value pairs, e.g. {"company": "Acme", "plan": "pro"}'),
+  properties: z
+    .record(z.string(), z.union([z.string(), z.number()]))
+    .optional()
+    .describe(
+      'Custom properties as key-value pairs, e.g. {"company": "Acme", "plan": "pro"}',
+    ),
 });
 
 const InputSchema = z.object({
-  contacts: z.array(ContactInputSchema).min(1).max(100).describe('Array of contacts to add or update. Each contact must have an email. Max 100 per call.'),
-  segments: z.array(z.string()).optional().describe('Segment names to add all contacts to, e.g. ["Newsletter", "Premium Users"]. Creates membership if segment exists.'),
-  unsubscribed: z.boolean().optional().describe('Set global unsubscribe status for all contacts. true = unsubscribed from all broadcasts.'),
+  contacts: z
+    .array(ContactInputSchema)
+    .min(1)
+    .max(100)
+    .describe(
+      'Array of contacts to add or update. Each contact must have an email. Max 100 per call.',
+    ),
+  segments: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Segment names to add all contacts to, e.g. ["Newsletter", "Premium Users"]. Creates membership if segment exists.',
+    ),
+  unsubscribed: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set global unsubscribe status for all contacts. true = unsubscribed from all broadcasts.',
+    ),
 });
 
 export const upsertContactsTool = defineTool({
@@ -26,6 +50,7 @@ export const upsertContactsTool = defineTool({
   title: toolsMetadata.upsert_contacts.title,
   description: toolsMetadata.upsert_contacts.description,
   inputSchema: InputSchema,
+  outputSchema: UpsertContactsOutputSchema,
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -49,8 +74,10 @@ export const upsertContactsTool = defineTool({
     const segmentIds: string[] = [];
     if (args.segments && args.segments.length > 0) {
       const segmentsResponse = await resend.listSegments(context);
-      const segmentMap = new Map(segmentsResponse.data.map(s => [s.name.toLowerCase(), s.id]));
-      
+      const segmentMap = new Map(
+        segmentsResponse.data.map((s) => [s.name.toLowerCase(), s.id]),
+      );
+
       for (const segmentName of args.segments) {
         const segmentId = segmentMap.get(segmentName.toLowerCase());
         if (segmentId) {
@@ -73,13 +100,22 @@ export const upsertContactsTool = defineTool({
         if (existingContact) {
           // Update existing contact
           const updateParams: Partial<resend.CreateContactParams> = {};
-          if (contact.first_name !== undefined) updateParams.first_name = contact.first_name;
-          if (contact.last_name !== undefined) updateParams.last_name = contact.last_name;
-          if (contact.properties !== undefined) updateParams.properties = contact.properties;
-          if (args.unsubscribed !== undefined) updateParams.unsubscribed = args.unsubscribed;
+          if (contact.first_name !== undefined)
+            updateParams.first_name = contact.first_name;
+          if (contact.last_name !== undefined)
+            updateParams.last_name = contact.last_name;
+          if (contact.properties !== undefined)
+            updateParams.properties = contact.properties;
+          if (args.unsubscribed !== undefined)
+            updateParams.unsubscribed = args.unsubscribed;
 
           await resend.updateContact(context, contact.email, updateParams);
-          results.push({ email: contact.email, ok: true, id: existingContact.id, action: 'updated' });
+          results.push({
+            email: contact.email,
+            ok: true,
+            id: existingContact.id,
+            action: 'updated',
+          });
           updated++;
         } else {
           // Create new contact
@@ -92,7 +128,12 @@ export const upsertContactsTool = defineTool({
           };
 
           const result = await resend.createContact(context, createParams);
-          results.push({ email: contact.email, ok: true, id: result.id, action: 'created' });
+          results.push({
+            email: contact.email,
+            ok: true,
+            id: result.id,
+            action: 'created',
+          });
           created++;
         }
 
@@ -105,10 +146,10 @@ export const upsertContactsTool = defineTool({
           }
         }
       } catch (error) {
-        results.push({ 
-          email: contact.email, 
-          ok: false, 
-          error: (error as Error).message 
+        results.push({
+          email: contact.email,
+          ok: false,
+          error: (error as Error).message,
         });
         failed++;
       }
